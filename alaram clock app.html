@@ -1,0 +1,226 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alarm Clock App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a202c;
+            color: #e2e8f0;
+            font-family: 'Arial', sans-serif;
+        }
+        .alarm-card {
+            transition: all 0.3s ease;
+        }
+        .alarm-card:hover {
+            transform: translateY(-2px);
+        }
+        .time-display {
+            font-size: 4rem;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center">
+    <div class="container mx-auto p-4 max-w-md">
+        <!-- Current Time and Date -->
+        <div class="text-center mb-8">
+            <div id="current-time" class="time-display"></div>
+            <div id="current-date" class="text-xl"></div>
+        </div>
+
+        <!-- Set New Alarm -->
+        <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+            <h2 class="text-2xl font-semibold mb-4">Set New Alarm</h2>
+            <div class="flex flex-col space-y-4">
+                <input type="time" id="alarm-time" class="bg-gray-700 text-white p-2 rounded">
+                <select id="alarm-tone" class="bg-gray-700 text-white p-2 rounded">
+                    <option value="tone1.mp3">Classic Beep</option>
+                    <option value="tone2.mp3">Morning Bell</option>
+                    <option value="tone3.mp3">Chime</option>
+                </select>
+                <button id="set-alarm" class="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded transition">Set Alarm</button>
+            </div>
+        </div>
+
+        <!-- Alarm List -->
+        <div id="alarm-list" class="space-y-4">
+            <h2 class="text-2xl font-semibold mb-4">Alarms</h2>
+            <!-- Alarms will be dynamically added here -->
+        </div>
+
+        <!-- Alarm Modal (for when alarm rings) -->
+        <div id="alarm-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg text-center">
+                <h2 class="text-2xl font-semibold mb-4">Alarm!</h2>
+                <p id="alarm-modal-time" class="text-xl mb-4"></p>
+                <div class="flex space-x-4 justify-center">
+                    <button id="snooze-alarm" class="bg-yellow-600 hover:bg-yellow-700 text-white p-2 rounded transition">Snooze (5 min)</button>
+                    <button id="dismiss-alarm" class="bg-red-600 hover:bg-red-700 text-white p-2 rounded transition">Dismiss</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <audio id="alarm-audio" src=""></audio>
+
+    <script>
+        // Update current time and date
+        function updateTime() {
+            const now = new Date();
+            const time = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const date = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            document.getElementById('current-time').textContent = time;
+            document.getElementById('current-date').textContent = date;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        // Alarm management
+        let alarms = JSON.parse(localStorage.getItem('alarms')) || [];
+        const alarmList = document.getElementById('alarm-list');
+        const alarmAudio = document.getElementById('alarm-audio');
+        let currentAlarmId = null;
+
+        // Set new alarm
+        document.getElementById('set-alarm').addEventListener('click', () => {
+            const timeInput = document.getElementById('alarm-time').value;
+            const tone = document.getElementById('alarm-tone').value;
+            if (timeInput) {
+                const id = Date.now();
+                alarms.push({ id, time: timeInput, tone, active: true });
+                localStorage.setItem('alarms', JSON.stringify(alarms));
+                renderAlarms();
+                document.getElementById('alarm-time').value = '';
+            }
+        });
+
+        // Render alarms
+        function renderAlarms() {
+            alarmList.innerHTML = '<h2 class="text-2xl font-semibold mb-4">Alarms</h2>';
+            alarms.forEach(alarm => {
+                const alarmCard = document.createElement('div');
+                alarmCard.className = 'alarm-card bg-gray-800 p-4 rounded-lg shadow-lg flex justify-between items-center';
+                alarmCard.innerHTML = `
+                    <div>
+                        <span class="text-lg">${alarm.time}</span>
+                        <span class="block text-sm text-gray-400">${alarm.tone.split('.')[0]}</span>
+                    </div>
+                    <label class="inline-flex items-center cursor-pointer">
+                        <input type="checkbox" class="sr-only peer" ${alarm.active ? 'checked' : ''} onchange="toggleAlarm(${alarm.id}, this.checked)">
+                        <div class="relative w-11 h-6 bg-gray-700 rounded-full peer peer-checked:bg-blue-600">
+                            <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition peer-checked:translate-x-5"></div>
+                        </div>
+                    </label>
+                `;
+                alarmList.appendChild(alarmCard);
+            });
+        }
+
+        // Toggle alarm active state
+        function toggleAlarm(id, active) {
+            alarms = alarms.map(alarm => alarm.id === id ? { ...alarm, active } : alarm);
+            localStorage.setItem('alarms', JSON.stringify(alarms));
+        }
+
+        // Check alarms
+        function checkAlarms() {
+            const now = new Date();
+            const currentTime = now.toTimeString().slice(0, 5); // HH:MM
+            alarms.forEach(alarm => {
+                if (alarm.active && alarm.time === currentTime && !currentAlarmId) {
+                    currentAlarmId = alarm.id;
+                    alarmAudio.src = alarm.tone;
+                    alarmAudio.play().catch(() => console.log('Audio playback failed'));
+                    showAlarmModal(alarm.time);
+                }
+            });
+        }
+        setInterval(checkAlarms, 1000);
+
+        // Show alarm modal
+        function showAlarmModal(time) {
+            document.getElementById('alarm-modal-time').textContent = time;
+            document.getElementById('alarm-modal').classList.remove('hidden');
+        }
+
+        // Snooze alarm
+        document.getElementById('snooze-alarm').addEventListener('click', () => {
+            alarmAudio.pause();
+            document.getElementById('alarm-modal').classList.add('hidden');
+            const alarm = alarms.find(a => a.id === currentAlarmId);
+            if (alarm) {
+                const [hours, minutes] = alarm.time.split(':').map(Number);
+                const newTime = new Date();
+                newTime.setHours(hours, minutes + 5);
+                alarms.push({
+                    id: Date.now(),
+                    time: newTime.toTimeString().slice(0, 5),
+                    tone: alarm.tone,
+                    active: true
+                });
+                localStorage.setItem('alarms', JSON.stringify(alarms));
+                renderAlarms();
+            }
+            currentAlarmId = null;
+        });
+
+        // Dismiss alarm
+        document.getElementById('dismiss-alarm').addEventListener('click', () => {
+            alarmAudio.pause();
+            document.getElementById('alarm-modal').classList.add('hidden');
+            alarms = alarms.filter(a => a.id !== currentAlarmId);
+            localStorage.setItem('alarms', JSON.stringify(alarms));
+            renderAlarms();
+            currentAlarmId = null;
+        });
+
+        // Initial render
+        renderAlarms();
+
+        // Note: Audio files are placeholders. In a real app, you would need to host actual audio files.
+    </script>
+</body>
+</html>
